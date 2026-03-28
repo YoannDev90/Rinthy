@@ -3,6 +3,10 @@
 declare const __APP_VERSION__: string;
 import { HashRouter, Routes, Route, useNavigate, useParams, Outlet, useLocation } from 'react-router-dom';
 import { App as CapApp } from '@capacitor/app';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import { Loader2, LogOut, ArrowLeft, Save, ExternalLink, BarChart2, ShieldCheck, Key, ChevronRight, Download, Activity, BookOpen, FileText, Monitor, Server, Edit3, Globe, Wallet, DollarSign, TrendingUp, Archive, Lock, EyeOff, Info, Heart, Clock, Users, Trash2, Moon, Sun, Smartphone, UserPlus, Search, X, Check, ChevronDown, Bell, AlertTriangle, Image as ImageIcon, Upload, Package, Calendar, File as FileIcon, Layers, MousePointerClick, CheckCheck, RefreshCw, MoreVertical } from 'lucide-react';
 import { fetchCurrentUser, fetchUserProjects, fetchProject, updateProject, fetchProjectMembers, deleteTeamMember, updateTeamMember, searchUser, addTeamMember, modifyUser, fetchNotifications, deleteNotification, markNotificationRead, markMultipleNotificationsRead, changeProjectIcon, deleteProjectIcon, addGalleryImage, deleteGalleryImage, fetchProjectDependencies, fetchProjectVersions, fetchGameVersionTags, fetchLoaderTags, modifyVersion, deleteVersionById, fetchUserPayoutHistoryWithStatus, fetchUserByIdWithStatus, fetchPayoutBalanceV3WithStatus, joinTeam, transferTeamOwnership } from './services/modrinthService';
 import { AuthState, ModrinthUser, ModrinthProject, NavTab, ProjectMember, SettingsContextType, ThemeMode, Language, UserSearchResult, ModifyUserPayload, ModrinthNotification, ProjectDependency, ModrinthVersion, ModrinthPayoutHistory } from './types';
@@ -14,7 +18,7 @@ const BackButtonHandler: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [lastBackPress, setLastBackPress] = useState(0);
-  const { t, theme } = useSettings();
+  const { t, theme, language } = useSettings();
 
   useEffect(() => {
     if (!CapApp || typeof (CapApp as any).addListener !== 'function') return;
@@ -151,6 +155,110 @@ const ModrinthLogo = ({ className }: { className?: string }) => (
   />
 );
 
+const isWhitespaceOnly = (value: React.ReactNode) => typeof value === 'string' && value.trim().length === 0;
+
+const isMultiInlineMediaParagraphNode = (node: any): boolean => {
+  const children = Array.isArray(node?.children) ? node.children : [];
+  const meaningfulChildren = children.filter((child: any) => !(child?.type === 'text' && String(child?.value || '').trim().length === 0));
+
+  if (meaningfulChildren.length <= 1) return false;
+
+  const allInlineMedia = meaningfulChildren.every((child: any) => {
+    if (child?.type !== 'element') return false;
+
+    if (child.tagName === 'img') return true;
+
+    if (child.tagName === 'a') {
+      const linkChildren = Array.isArray(child.children) ? child.children : [];
+      const meaningfulLinkChildren = linkChildren.filter((linkChild: any) => !(linkChild?.type === 'text' && String(linkChild?.value || '').trim().length === 0));
+      return meaningfulLinkChildren.length > 0 && meaningfulLinkChildren.every((linkChild: any) => linkChild?.type === 'element' && linkChild.tagName === 'img');
+    }
+
+    return false;
+  });
+
+  return allInlineMedia;
+};
+
+const MarkdownRenderer: React.FC<{ content: string; className?: string }> = ({ content, className }) => (
+  <div className={className}>
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      rehypePlugins={[
+        rehypeRaw,
+        [
+          rehypeSanitize,
+          {
+            ...defaultSchema,
+            tagNames: [
+              ...(defaultSchema.tagNames || []),
+              'details',
+              'summary',
+              'kbd',
+              'sub',
+              'sup',
+              'del',
+              'ins',
+              'center',
+              'iframe'
+            ],
+            attributes: {
+              ...defaultSchema.attributes,
+              a: [...(defaultSchema.attributes?.a || []), ['target', '_blank'], ['rel', 'noopener noreferrer']],
+              img: [...(defaultSchema.attributes?.img || []), 'loading'],
+              code: [...(defaultSchema.attributes?.code || []), 'className'],
+              th: [...(defaultSchema.attributes?.th || []), 'align'],
+              td: [...(defaultSchema.attributes?.td || []), 'align'],
+              div: [...(defaultSchema.attributes?.div || []), 'align'],
+              iframe: [
+                'src',
+                'width',
+                'height',
+                'title',
+                'allow',
+                'allowfullscreen',
+                'frameborder'
+              ]
+            },
+            protocols: {
+              ...defaultSchema.protocols,
+              href: ['http', 'https', 'mailto'],
+              src: ['http', 'https']
+            }
+          }
+        ]
+      ]}
+      components={{
+        p: ({ node, children }) => {
+          if (isMultiInlineMediaParagraphNode(node)) {
+            return <p className="markdown-inline-media">{children}</p>;
+          }
+          return <p>{children}</p>;
+        },
+        a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+        center: ({ node: _node, children }) => <div className="markdown-center">{children}</div>,
+        img: ({ node: _node, ...props }) => <img {...props} loading="lazy" alt={props.alt || ''} />,
+        iframe: ({ node: _node, src, ...props }) => {
+          const allowed =
+            typeof src === 'string' &&
+            /^(https:\/\/(www\.)?youtube\.com\/embed\/|https:\/\/youtube\.com\/embed\/|https:\/\/www\.youtube-nocookie\.com\/embed\/|https:\/\/discord\.com\/widget\?)/i.test(src);
+
+          if (!allowed) return null;
+
+          return <iframe src={src} loading="lazy" referrerPolicy="no-referrer" {...props} />;
+        },
+        code: ({ node: _node, className: codeClassName, children, ...props }) => (
+          <code className={codeClassName} {...props}>
+            {children}
+          </code>
+        )
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  </div>
+);
+
 // --- Translations ---
 const TRANSLATIONS = {
   ru: {
@@ -284,7 +392,16 @@ const TRANSLATIONS = {
     game_versions: 'Версии игры',
     loaders: 'Загрузчики',
     popularity: 'Популярность',
+    sort_by: 'Сортировка',
+    recently_updated: 'Недавно обновлённые',
+    follows_sort: 'По подпискам',
+    alphabetical: 'По алфавиту',
     read_all: 'Прочитать все',
+    show_more_versions: 'Показать версии',
+    hide_versions: 'Скрыть версии',
+    mark_group_as_read: 'Прочитать',
+    received_label: 'Получено',
+    project_updated_group: 'Проект, на который вы подписаны, был обновлён',
     press_back_again: 'Нажмите назад ещё раз для выхода',
     accent_color: 'Основной цвет',
     reset: 'Сбросить',
@@ -452,7 +569,16 @@ const TRANSLATIONS = {
     game_versions: 'Game Versions',
     loaders: 'Loaders',
     popularity: 'Popularity',
+    sort_by: 'Sort by',
+    recently_updated: 'Recently updated',
+    follows_sort: 'Follows',
+    alphabetical: 'Alphabetical',
     read_all: 'Read All',
+    show_more_versions: 'Show versions',
+    hide_versions: 'Hide versions',
+    mark_group_as_read: 'Mark as read',
+    received_label: 'Received',
+    project_updated_group: 'A project you follow has been updated',
     press_back_again: 'Press back again to exit',
     accent_color: 'Accent Color',
     reset: 'Reset',
@@ -494,6 +620,10 @@ const TRANSLATIONS = {
 type ResolvedNotification = ModrinthNotification & {
   displayTitle: string;
   displayText: string;
+  projectKey: string;
+  projectTitle: string | null;
+  projectIconUrl: string | null;
+  versionLabel: string | null;
 };
 
 type NotificationEntityRef = {
@@ -502,10 +632,75 @@ type NotificationEntityRef = {
   projectSlug?: string;
 };
 
+type ProjectSortMode = 'popularity' | 'updated' | 'followers' | 'title';
+
+type NotificationGroup = {
+  key: string;
+  projectTitle: string | null;
+  projectIconUrl: string | null;
+  items: ResolvedNotification[];
+};
+
 const MODRINTH_ID_RE = /\b[A-Za-z0-9]{8}\b/g;
+const PROJECT_SORT_KEY = 'project_sort_mode';
+
+const PROJECT_SORT_OPTIONS: ProjectSortMode[] = ['popularity', 'updated', 'title'];
 
 const replaceResolvedIds = (value: string, replacements: Record<string, string>) =>
   value.replace(MODRINTH_ID_RE, (match) => replacements[match] || match);
+
+const getStoredProjectSortMode = (): ProjectSortMode => {
+  const raw = localStorage.getItem(PROJECT_SORT_KEY);
+  return raw === 'updated' || raw === 'followers' || raw === 'title' ? raw : 'popularity';
+};
+
+const sortProjectsByMode = (projects: ModrinthProject[], mode: ProjectSortMode) => {
+  const next = [...projects];
+  switch (mode) {
+    case 'updated':
+      return next.sort((a, b) => new Date(b.updated).getTime() - new Date(a.updated).getTime());
+    case 'followers':
+      return next.sort((a, b) => b.followers - a.followers || b.downloads - a.downloads);
+    case 'title':
+      return next.sort((a, b) => a.title.localeCompare(b.title));
+    case 'popularity':
+    default:
+      return next.sort((a, b) => b.downloads - a.downloads || b.followers - a.followers);
+  }
+};
+
+const formatNotificationRelativeTime = (value: string, locale: string) => {
+  const timestamp = new Date(value).getTime();
+  const diffMs = Date.now() - timestamp;
+  const diffMinutes = Math.max(1, Math.round(diffMs / 60000));
+
+  if (diffMinutes < 60) return locale === 'ru' ? `${diffMinutes} мин назад` : `${diffMinutes}m ago`;
+
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) return locale === 'ru' ? `${diffHours} ч назад` : `${diffHours}h ago`;
+
+  const diffDays = Math.round(diffHours / 24);
+  return locale === 'ru' ? `${diffDays} дн назад` : `${diffDays}d ago`;
+};
+
+const formatProjectsCountLabel = (count: number, language: Language, t: (key: string) => string) => {
+  if (language !== 'ru') {
+    return `${count} ${t('projects_label')}`;
+  }
+
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+
+  if (mod10 === 1 && mod100 !== 11) {
+    return `${count} проект`;
+  }
+
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
+    return `${count} проекта`;
+  }
+
+  return `${count} проектов`;
+};
 
 const getNotificationEntityRefs = (notif: ModrinthNotification): NotificationEntityRef[] => {
   const refs = new Map<string, NotificationEntityRef>();
@@ -620,7 +815,7 @@ const WelcomeSetup: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
 
 const Onboarding: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
   const [step, setStep] = useState(0);
-  const { t, theme } = useSettings();
+  const { t, theme, language } = useSettings();
   const steps = [
     {
       icon: <ModrinthLogo className="w-16 h-16 text-modrinth-green" />,
@@ -669,7 +864,7 @@ const LoginScreen: React.FC<{ onLogin: (token: string) => void; onStartOAuth: ()
       setTokenInput(savedToken);
     }
   }, [savedToken, tokenInput]);
-  const { t, theme } = useSettings();
+  const { t, theme, language } = useSettings();
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-modrinth-bg p-6 relative overflow-hidden">
       <div className="w-full max-w-xs animate-fade-in-up relative z-10">
@@ -798,8 +993,9 @@ const UpdateModal: React.FC<{ release: GitHubRelease; onClose: () => void }> = (
 const NotificationsModal: React.FC<{ isOpen: boolean; onClose: () => void; user: ModrinthUser; token: string; onUnreadCountChange?: (count: number) => void }> = ({ isOpen, onClose, user, token, onUnreadCountChange }) => {
     const [notifs, setNotifs] = useState<ModrinthNotification[]>([]);
     const [resolvedNotifs, setResolvedNotifs] = useState<ResolvedNotification[]>([]);
+    const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
     const [loading, setLoading] = useState(true);
-    const { t, theme } = useSettings();
+    const { t, theme, language } = useSettings();
 
     useEffect(() => {
         if(isOpen) {
@@ -826,6 +1022,8 @@ const NotificationsModal: React.FC<{ isOpen: boolean; onClose: () => void; user:
             }
 
             const replacements: Record<string, string> = {};
+            const projectCache = new Map<string, ModrinthProject>();
+            const versionReplacements: Record<string, string> = {};
             const entityRefs = Array.from(
                 new Map(
                     notifs
@@ -844,7 +1042,9 @@ const NotificationsModal: React.FC<{ isOpen: boolean; onClose: () => void; user:
                         const versions = await fetchProjectVersions(projectSlug, token);
                         const version = versions.find((item) => item.id === id);
                         if (version) {
-                            replacements[id] = version.name || version.version_number || id;
+                            const label = version.name || version.version_number || id;
+                            replacements[id] = label;
+                            versionReplacements[id] = label;
                         }
                     } catch {
                         // Leave unresolved version IDs untouched.
@@ -855,6 +1055,8 @@ const NotificationsModal: React.FC<{ isOpen: boolean; onClose: () => void; user:
                 if (kind === 'project' || kind === 'unknown') {
                     try {
                         const project = await fetchProject(id, token);
+                        projectCache.set(project.id, project);
+                        projectCache.set(project.slug, project);
                         replacements[id] = project.title || id;
                         replacements[project.id] = project.title || project.id;
                         replacements[project.slug] = project.title || project.slug;
@@ -867,11 +1069,23 @@ const NotificationsModal: React.FC<{ isOpen: boolean; onClose: () => void; user:
             if (cancelled) return;
 
             setResolvedNotifs(
-                notifs.map((notif) => ({
-                    ...notif,
-                    displayTitle: replaceResolvedIds(notif.title, replacements),
-                    displayText: replaceResolvedIds(notif.text, replacements)
-                }))
+                notifs.map((notif) => {
+                    const link = notif.link || '';
+                    const projectSlug = link.match(/\/project\/([^/?#]+)/)?.[1] || null;
+                    const projectIdFromText = (notif.title + ' ' + notif.text).match(MODRINTH_ID_RE)?.find((id) => projectCache.has(id)) || null;
+                    const project = (projectSlug && projectCache.get(projectSlug)) || (projectIdFromText && projectCache.get(projectIdFromText)) || null;
+                    const versionId = link.match(/\/version\/([^/?#]+)/)?.[1] || (notif.text.match(MODRINTH_ID_RE)?.find((id) => versionReplacements[id]) ?? null);
+
+                    return {
+                        ...notif,
+                        displayTitle: replaceResolvedIds(notif.title, replacements),
+                        displayText: replaceResolvedIds(notif.text, replacements),
+                        projectKey: project?.id || project?.slug || notif.id,
+                        projectTitle: project?.title || null,
+                        projectIconUrl: project?.icon_url || null,
+                        versionLabel: versionId ? versionReplacements[versionId] || null : null
+                    };
+                })
             );
         };
 
@@ -881,6 +1095,42 @@ const NotificationsModal: React.FC<{ isOpen: boolean; onClose: () => void; user:
             cancelled = true;
         };
     }, [notifs, token]);
+
+    const groupedNotifs = useMemo<NotificationGroup[]>(() => {
+        const groups = new Map<string, NotificationGroup>();
+
+        resolvedNotifs.forEach((notif) => {
+            const existing = groups.get(notif.projectKey);
+            if (existing) {
+                existing.items.push(notif);
+                if (!existing.projectTitle && notif.projectTitle) existing.projectTitle = notif.projectTitle;
+                if (!existing.projectIconUrl && notif.projectIconUrl) existing.projectIconUrl = notif.projectIconUrl;
+                return;
+            }
+
+            groups.set(notif.projectKey, {
+                key: notif.projectKey,
+                projectTitle: notif.projectTitle,
+                projectIconUrl: notif.projectIconUrl,
+                items: [notif]
+            });
+        });
+
+        return Array.from(groups.values()).map((group) => ({
+            ...group,
+            items: [...group.items].sort((a, b) => new Date(b.created).getTime() - new Date(a.created).getTime())
+        }));
+    }, [resolvedNotifs]);
+
+    useEffect(() => {
+        setExpandedGroups((prev) => {
+            const next: Record<string, boolean> = {};
+            groupedNotifs.forEach((group) => {
+                next[group.key] = prev[group.key] ?? group.items.length <= 1;
+            });
+            return next;
+        });
+    }, [groupedNotifs]);
 
     const handleRead = async (id: string) => {
         try {
@@ -904,6 +1154,24 @@ const NotificationsModal: React.FC<{ isOpen: boolean; onClose: () => void; user:
             onUnreadCountChange?.(0);
         } catch(e) { console.error(e); }
         setLoading(false);
+    };
+
+    const handleReadGroup = async (ids: string[]) => {
+        if (ids.length === 0) return;
+        try {
+            if (ids.length === 1) {
+                await markNotificationRead(ids[0], token);
+            } else {
+                await markMultipleNotificationsRead(ids, token);
+            }
+            setNotifs((prev) => {
+                const next = prev.filter((notif) => !ids.includes(notif.id));
+                onUnreadCountChange?.(next.length);
+                return next;
+            });
+        } catch (e) {
+            console.error(e);
+        }
     };
 
     if (!isOpen) return null;
@@ -944,19 +1212,108 @@ const NotificationsModal: React.FC<{ isOpen: boolean; onClose: () => void; user:
                             <p>{t('no_notifications')}</p>
                         </div>
                     )}
-                    {resolvedNotifs.map(n => (
-                        <div key={n.id} className={`${cardClass} p-4 rounded-3xl flex gap-3 relative group overflow-hidden`}>
-                            <div className="flex-1 relative min-w-0">
-                                <h4 className="text-sm font-bold text-modrinth-text mb-1">{n.displayTitle}</h4>
-                                <p className="text-xs text-modrinth-muted leading-relaxed mb-2">{n.displayText}</p>
-                                <div className="flex items-center gap-3 text-[10px] text-modrinth-muted/70">
-                                    <span>{new Date(n.created).toLocaleDateString()}</span>
-                                    {n.link && <a href={`https://modrinth.com${n.link}`} target="_blank" rel="noreferrer" className="text-modrinth-green hover:underline flex items-center gap-1 truncate">View <ExternalLink size={8}/></a>}
+                    {groupedNotifs.map(group => {
+                        const primary = group.items[0];
+                        const expanded = expandedGroups[group.key] ?? group.items.length <= 1;
+                        const receivedLabel = formatNotificationRelativeTime(primary.created, language);
+                        const groupActionIds = group.items.map((item) => item.id);
+
+                        return (
+                            <div key={group.key} className={`${cardClass} p-4 rounded-3xl relative overflow-hidden`}>
+                                <div className="flex gap-3">
+                                    {group.projectIconUrl ? (
+                                        <img src={group.projectIconUrl} alt={group.projectTitle || 'Project'} className="w-11 h-11 rounded-2xl object-cover shadow-[0_8px_20px_rgba(0,0,0,0.25)]" />
+                                    ) : (
+                                        <div className="w-11 h-11 rounded-2xl bg-modrinth-cardHover text-modrinth-green flex items-center justify-center shadow-[0_8px_20px_rgba(0,0,0,0.18)]">
+                                            <Package size={18} />
+                                        </div>
+                                    )}
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex items-start justify-between gap-2">
+                                            <div className="min-w-0">
+                                                <p className="text-[11px] uppercase tracking-[0.14em] text-modrinth-muted/80 mb-1">{t('notifications')}</p>
+                                                <h4 className="text-sm font-semibold text-modrinth-text leading-snug">
+                                                    {group.projectTitle ? (
+                                                        <>
+                                                            {t('project_updated_group')}: <span className="font-bold">{group.projectTitle}</span>
+                                                        </>
+                                                    ) : primary.displayTitle}
+                                                </h4>
+                                            </div>
+                                            {group.items.length > 1 && (
+                                                <button
+                                                    onClick={() => setExpandedGroups((prev) => ({ ...prev, [group.key]: !expanded }))}
+                                                    className="text-modrinth-muted hover:text-modrinth-text transition-colors p-1 rounded-full hover:bg-modrinth-cardHover"
+                                                >
+                                                    <ChevronDown size={18} className={`transition-transform ${expanded ? 'rotate-180' : ''}`} />
+                                                </button>
+                                            )}
+                                        </div>
+                                        {!group.projectTitle && (
+                                            <p className="text-xs text-modrinth-muted leading-relaxed mt-2">{primary.displayText}</p>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="mt-3 space-y-2">
+                                    {(expanded ? group.items : group.items.slice(0, 1)).map((item) => (
+                                        <div key={item.id} className={`rounded-2xl px-3 py-2.5 ${theme === 'light' ? 'bg-white/70 border border-black/[0.08]' : 'bg-modrinth-card/70'}`}>
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="text-sm text-modrinth-text leading-snug break-words">
+                                                        <span className="font-medium text-modrinth-green">{item.versionLabel || item.displayTitle}</span>
+                                                        {item.versionLabel && item.displayText ? <span className="text-modrinth-muted"> {item.displayText}</span> : null}
+                                                    </div>
+                                                    <div className="mt-1 flex items-center gap-3 text-[11px] text-modrinth-muted/80">
+                                                        <span>{formatNotificationRelativeTime(item.created, language)}</span>
+                                                        {item.link && (
+                                                            <a href={`https://modrinth.com${item.link}`} target="_blank" rel="noreferrer" className="text-modrinth-green hover:underline flex items-center gap-1 truncate">
+                                                                View <ExternalLink size={10}/>
+                                                            </a>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                {group.items.length === 1 && (
+                                                    <button onClick={() => handleRead(item.id)} className="relative text-modrinth-green hover:bg-modrinth-green/10 self-start p-1.5 rounded-full transition-colors">
+                                                        <Check size={16}/>
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {group.items.length > 1 && (
+                                    <button
+                                        onClick={() => setExpandedGroups((prev) => ({ ...prev, [group.key]: !expanded }))}
+                                        className={`mt-3 text-xs font-bold px-3 py-2 rounded-full transition-colors ${
+                                          theme === 'light'
+                                            ? 'bg-black/[0.05] text-black/70 hover:bg-black/10'
+                                            : 'bg-modrinth-cardHover text-modrinth-muted hover:text-modrinth-text'
+                                        }`}
+                                    >
+                                        {expanded ? t('hide_versions') : `${t('show_more_versions')} (${group.items.length})`}
+                                    </button>
+                                )}
+
+                                <div className="mt-3 flex items-center justify-between gap-3">
+                                    <button
+                                        onClick={() => handleReadGroup(groupActionIds)}
+                                        className={`text-xs font-bold px-3.5 py-2 rounded-full transition-colors flex items-center gap-1.5 ${
+                                          theme === 'light'
+                                            ? 'bg-black/[0.05] text-black/70 hover:bg-black/10'
+                                            : 'bg-modrinth-cardHover text-modrinth-text hover:bg-modrinth-border/70'
+                                        }`}
+                                    >
+                                        <Check size={14} /> {t('mark_group_as_read')}
+                                    </button>
+                                    <span className="text-[11px] text-modrinth-muted/80">
+                                        {t('received_label')} {receivedLabel}
+                                    </span>
                                 </div>
                             </div>
-                            <button onClick={() => handleRead(n.id)} className="relative text-modrinth-green hover:bg-modrinth-green/10 self-start p-1.5 rounded-full transition-colors"><Check size={16}/></button>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             </div>
         </div>
@@ -965,11 +1322,16 @@ const NotificationsModal: React.FC<{ isOpen: boolean; onClose: () => void; user:
 
 const Dashboard: React.FC<{ user: ModrinthUser; token: string }> = ({ user, token }) => {
   const [projects, setProjects] = useState<ModrinthProject[]>([]);
+  const [sortMode, setSortMode] = useState<ProjectSortMode>(() => getStoredProjectSortMode());
+  const [showSortMenu, setShowSortMenu] = useState(false);
   const [loading, setLoading] = useState(true);
   const [showNotifs, setShowNotifs] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const sortMenuRef = useRef<HTMLDivElement | null>(null);
   const navigate = useNavigate();
-  const { t, theme } = useSettings();
+  const { t, theme, language } = useSettings();
+
+  const sortedProjects = useMemo(() => sortProjectsByMode(projects, sortMode), [projects, sortMode]);
 
   const loadProjects = useCallback(() => {
     let mounted = true;
@@ -977,7 +1339,7 @@ const Dashboard: React.FC<{ user: ModrinthUser; token: string }> = ({ user, toke
     fetchUserProjects(user.id, token)
       .then(data => {
         if (mounted) {
-          setProjects(data.sort((a, b) => b.downloads - a.downloads));
+          setProjects(data);
         }
       })
       .catch(console.error)
@@ -1003,6 +1365,28 @@ const Dashboard: React.FC<{ user: ModrinthUser; token: string }> = ({ user, toke
   useEffect(() => {
     refreshUnread();
   }, [refreshUnread]);
+
+  const handleChangeSortMode = (mode: ProjectSortMode) => {
+    setSortMode(mode);
+    setShowSortMenu(false);
+    localStorage.setItem(PROJECT_SORT_KEY, mode);
+  };
+
+  useEffect(() => {
+    if (!showSortMenu) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (!sortMenuRef.current?.contains(event.target as Node)) {
+        setShowSortMenu(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showSortMenu]);
+
+  const getSortModeLabel = (mode: ProjectSortMode) =>
+    t(mode === 'updated' ? 'recently_updated' : mode === 'followers' ? 'follows_sort' : mode === 'title' ? 'alphabetical' : 'popularity');
 
   return (
     <div className="pb-4 px-4 animate-fade-in">
@@ -1032,12 +1416,67 @@ const Dashboard: React.FC<{ user: ModrinthUser; token: string }> = ({ user, toke
       </header>
       {loading ? <div className="flex justify-center pt-40"><Loader2 className="animate-spin text-modrinth-green w-10 h-10" /></div> : (
         <div className="space-y-1 pb-20">
-          {projects.map((p, idx) => (
+          <div className="mb-1 flex items-center justify-between px-1" ref={sortMenuRef}>
+            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-modrinth-muted/75">
+              {formatProjectsCountLabel(sortedProjects.length, language, t)}
+            </div>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowSortMenu((prev) => !prev)}
+                className={`inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs font-semibold transition-colors ${
+                  theme === 'light'
+                    ? 'bg-white/80 border border-black/10 text-black/70 hover:bg-white'
+                    : 'bg-modrinth-card/80 text-modrinth-muted hover:text-modrinth-text hover:bg-modrinth-cardHover'
+                }`}
+              >
+                <Layers size={13} className="text-modrinth-green" />
+                <span>{getSortModeLabel(sortMode)}</span>
+                <ChevronDown size={14} className={`transition-transform ${showSortMenu ? 'rotate-180' : ''}`} />
+              </button>
+              {showSortMenu && (
+                <div
+                  className={`absolute right-0 top-[calc(100%+0.35rem)] z-40 min-w-[220px] rounded-2xl p-2 shadow-[0_14px_34px_rgba(0,0,0,0.34)] ${
+                    theme === 'light'
+                      ? 'bg-white/95'
+                      : 'bg-modrinth-card/95'
+                  } backdrop-blur-xl animate-fade-in-up`}
+                >
+                  <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-modrinth-muted">
+                    {t('sort_by')}
+                  </div>
+                  <div className="mt-1 space-y-1">
+                    {PROJECT_SORT_OPTIONS.map((mode) => {
+                      const active = sortMode === mode;
+                      return (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => handleChangeSortMode(mode)}
+                          className={`w-full flex items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-left text-sm leading-5 transition-colors ${
+                            active
+                              ? 'bg-modrinth-green/14 text-modrinth-green'
+                              : theme === 'light'
+                                ? 'text-black/70 hover:bg-black/[0.05]'
+                                : 'text-modrinth-text hover:bg-modrinth-cardHover'
+                          }`}
+                        >
+                          <span className="font-medium">{getSortModeLabel(mode)}</span>
+                          {active ? <Check size={14} /> : <span className="w-[14px]" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+          {sortedProjects.map((p, idx) => (
              <div key={p.id} style={{ animationDelay: `${idx * 0.05}s` }} className="animate-fade-in-up">
                 <ProjectCard project={p} onClick={(id) => navigate(`/project/${id}`)} />
              </div>
           ))}
-          {projects.length === 0 && (
+          {sortedProjects.length === 0 && (
             <div className="text-center text-modrinth-muted py-40">
               <div className="bg-modrinth-card/75 backdrop-blur-xl inline-block p-6 rounded-full mb-4 shadow-[0_10px_26px_rgba(0,0,0,0.25)]"><FileText size={48} className="opacity-50"/></div>
               <p className="text-lg font-medium">{t('no_projects')}</p>
@@ -1421,182 +1860,6 @@ const ProjectDetail: React.FC<{ token: string; currentUserId?: string | null }> 
     setFormData(prev => field === 'license_id' ? { ...prev, license: { ...prev.license!, id: value, name: prev.license?.name || '' } } : { ...prev, [field]: value });
   };
 
-  const renderMarkdown = (text: string) => {
-    if (!text) return { __html: '' };
-
-    const formatInline = (value: string) => {
-      let v = value
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-
-      const tokens: string[] = [];
-      const stash = (html: string) => {
-        const key = `%%MDTOKEN${tokens.length}%%`;
-        tokens.push(html);
-        return key;
-      };
-
-      v = v.replace(/\[\!\[(.*?)\]\((https?:[^\s)]+)\)\]\((https?:[^\s)]+)\)/gim, (_m, alt, src, href) =>
-        stash(`<a href="${href}" target="_blank" rel="noopener noreferrer"><img src="${src}" alt="${alt}" referrerpolicy="no-referrer" loading="lazy" /></a>`)
-      );
-      v = v.replace(/!\[(.*?)\]\((https?:[^\s)]+)\)/gim, (_m, alt, src) =>
-        stash(`<img src="${src}" alt="${alt}" referrerpolicy="no-referrer" loading="lazy" />`)
-      );
-      v = v.replace(/\[(.+?)\]\((https?:[^\s)]+)\)/gim, (_m, text, href) =>
-        stash(`<a href="${href}" target="_blank" rel="noopener noreferrer">${text}</a>`)
-      );
-      v = v.replace(/(^|[\s(])(https?:\/\/[^\s<]+)/gim, (_m, prefix, href) =>
-        `${prefix}${stash(`<a href="${href}" target="_blank" rel="noopener noreferrer">${href}</a>`)}`
-      );
-
-      v = v.replace(/`([^`]+)`/gim, '<code>$1<\/code>');
-      v = v.replace(/\*\*(.*?)\*\*/gim, '<strong>$1<\/strong>');
-      v = v.replace(/__(.*?)__/gim, '<strong>$1<\/strong>');
-      v = v.replace(/~~(.*?)~~/gim, '<del>$1<\/del>');
-      v = v.replace(/_(.*?)_/gim, '<em>$1<\/em>');
-      v = v.replace(/\*(.*?)\*/gim, '<em>$1<\/em>');
-
-      tokens.forEach((html, i) => {
-        const key = `%%MDTOKEN${i}%%`;
-        v = v.split(key).join(html);
-      });
-
-      return v;
-    };
-
-    const lines = text.split(/\n/);
-    const htmlParts: string[] = [];
-    let inList = false;
-    let lastWasH1 = false;
-    let paragraphParts: string[] = [];
-    let blockquoteParts: string[] = [];
-
-    const flushParagraph = () => {
-      if (paragraphParts.length === 0) return;
-      htmlParts.push(`<p>${paragraphParts.join(' ')}<\/p>`);
-      paragraphParts = [];
-    };
-
-    const flushBlockquote = () => {
-      if (blockquoteParts.length === 0) return;
-      htmlParts.push(`<blockquote><p>${blockquoteParts.join('<br/>')}<\/p><\/blockquote>`);
-      blockquoteParts = [];
-    };
-
-    for (let raw of lines) {
-      const line = raw.trimEnd();
-      const content = line.trimStart();
-
-      if (!line.trim()) {
-        flushParagraph();
-        flushBlockquote();
-        if (inList) {
-          htmlParts.push('</ul>');
-          inList = false;
-        }
-        lastWasH1 = false;
-        continue;
-      }
-
-      const h3 = /^###\s+(.*)/.exec(content);
-      if (h3) {
-        flushParagraph();
-        flushBlockquote();
-        if (inList) {
-          htmlParts.push('</ul>');
-          inList = false;
-        }
-        htmlParts.push(`<h3>${formatInline(h3[1])}<\/h3>`);
-        lastWasH1 = false;
-        continue;
-      }
-      const h2 = /^##\s+(.*)/.exec(content);
-      if (h2) {
-        flushParagraph();
-        flushBlockquote();
-        if (inList) {
-          htmlParts.push('</ul>');
-          inList = false;
-        }
-        htmlParts.push(`<h2>${formatInline(h2[1])}<\/h2>`);
-        lastWasH1 = false;
-        continue;
-      }
-      const h1 = /^#\s+(.*)/.exec(content);
-      if (h1) {
-        flushParagraph();
-        flushBlockquote();
-        if (inList) {
-          htmlParts.push('</ul>');
-          inList = false;
-        }
-        htmlParts.push(`<h1>${formatInline(h1[1])}<\/h1>`);
-        lastWasH1 = true;
-        continue;
-      }
-
-      if (/^-{3,}\s*$/.test(content)) {
-        flushParagraph();
-        flushBlockquote();
-        if (lastWasH1) {
-          lastWasH1 = false;
-          continue;
-        }
-        if (inList) {
-          htmlParts.push('</ul>');
-          inList = false;
-        }
-        htmlParts.push('<hr/>');
-        lastWasH1 = false;
-        continue;
-      }
-
-      const li = /^-\s+(.*)/.exec(content);
-      if (li) {
-        flushParagraph();
-        flushBlockquote();
-        if (!inList) {
-          htmlParts.push('<ul>');
-          inList = true;
-        }
-        htmlParts.push(`<li>${formatInline(li[1])}<\/li>`);
-        lastWasH1 = false;
-        continue;
-      }
-
-      const bq = /^>\s?(.*)/.exec(content);
-      if (bq) {
-        flushParagraph();
-        if (inList) {
-          htmlParts.push('</ul>');
-          inList = false;
-        }
-        blockquoteParts.push(formatInline(bq[1]));
-        lastWasH1 = false;
-        continue;
-      }
-
-      flushBlockquote();
-
-      if (inList) {
-        htmlParts.push('</ul>');
-        inList = false;
-      }
-
-      paragraphParts.push(formatInline(line));
-      lastWasH1 = false;
-    }
-
-    flushParagraph();
-    flushBlockquote();
-    if (inList) {
-      htmlParts.push('</ul>');
-    }
-
-    return { __html: htmlParts.join('') };
-  };
-
   const handleSave = async () => {
     if (!project || !id) return;
     setIsSaving(true);
@@ -1773,9 +2036,9 @@ const ProjectDetail: React.FC<{ token: string; currentUserId?: string | null }> 
              <div className="bg-modrinth-card/75 backdrop-blur-xl rounded-3xl p-5 shadow-[0_10px_26px_rgba(0,0,0,0.22)] relative overflow-hidden">
                 <h3 className="text-modrinth-text font-bold mb-2 text-sm flex items-center gap-2"><FileText size={16} className="text-modrinth-green"/> {t('description')}</h3>
                 {project.body?.trim() ? (
-                  <div
+                  <MarkdownRenderer
+                    content={project.body}
                     className="text-modrinth-text/80 leading-relaxed text-sm markdown-preview"
-                    dangerouslySetInnerHTML={renderMarkdown(project.body)}
                   />
                 ) : (
                   <p className="text-modrinth-text/80 leading-relaxed text-sm">{t('no_description')}</p>
@@ -1954,9 +2217,9 @@ const ProjectDetail: React.FC<{ token: string; currentUserId?: string | null }> 
                     className="w-full bg-modrinth-bg border border-modrinth-border rounded-xl p-3.5 text-modrinth-text text-sm focus:border-modrinth-green outline-none h-40 font-mono text-xs"
                   />
                   {showBodyPreview && (
-                    <div className="mt-1 bg-modrinth-bg border border-dashed border-modrinth-border rounded-xl p-3.5 text-sm text-modrinth-text prose prose-invert max-w-none markdown-preview no-scrollbar overflow-x-auto">
-                      <div dangerouslySetInnerHTML={renderMarkdown(formData.body || '')} />
-                    </div>
+                  <div className="mt-1 bg-modrinth-bg border border-dashed border-modrinth-border rounded-xl p-3.5 text-sm text-modrinth-text prose prose-invert max-w-none markdown-preview no-scrollbar overflow-x-auto">
+                      <MarkdownRenderer content={formData.body || ''} />
+                  </div>
                   )}
                 </div>
               </div>
